@@ -233,7 +233,7 @@ export const broadcastMessageToAll = async (req, res, next) => {
       }
     }
 
-    // Bot-related configuration
+    // Bot-related configur
     const botCount = Math.min(Math.max(parseInt(rawBotCount || 8), 1), 100);
     const botDelays = Array.isArray(rawBotDelays)
       ? rawBotDelays.map((d) => parseInt(d, 10) || 0)
