@@ -69,25 +69,29 @@ export const addUser = async (req, res, next) => {
     next(err);
   }
 };
+
+
 export const addTenUsersWithCustomIds = async (req, res, next) => {
   try {
     const prisma = getPrismaInstance();
+
     const { startingId = 1, contacts = [] } = req.body;
 
     if (!contacts.length) {
       return res.status(400).json({ error: "No contacts provided." });
     }
 
-    const arrayOfUserObjects = contacts.map((contact, index) => {
+    const arrayOfUserObjects = contacts.map((nameOrNumber, index) => {
       const id = startingId + index;
+      const email = `user${id}@example.com`;
+      const profilePicture = `/avatars/${Math.floor(Math.random() * 1000) + 1}.png`;
 
       return {
         id,
-        email: contact.email || `user${id}@example.com`,
-        name: contact.name,
-        phoneNumber: contact.phoneNumber || null,
-        profilePicture: contact.profilePicture || `/avatars/default.png`,
-        about: contact.about || "",
+        email,
+        name: nameOrNumber,
+        profilePicture,
+        about: "",
       };
     });
 
@@ -104,12 +108,13 @@ export const addTenUsersWithCustomIds = async (req, res, next) => {
   }
 };
 
+
 export const deleteBatchUsers = async (req, res, next) => {
   try {
     const startId = parseInt(req.params.startId);
     const prisma = getPrismaInstance();
 
-    const idsToDelete = Array.from({ length: 3500 }, (_, i) => startId + i);
+    const idsToDelete = Array.from({ length: 1500 }, (_, i) => startId + i);
 
     // First, delete all messages related to these users
     await prisma.messages.deleteMany({
@@ -176,95 +181,81 @@ export const addUserWithCustomId = async (req, res, next) => {
 
 export const broadcastMessageToAll = async (req, res, next) => {
   try {
-    const {
-      message,
-      senderId,
-      botCount: rawBotCount,
-      botDelays: rawBotDelays,
-    } = req.body;
-
+    const { message, senderId } = req.body;
     if (!message || !senderId) {
+      console.log("❌ Missing message or senderId");
       return res.status(400).json({ message: "Both message and senderId are required." });
     }
 
     const prisma = getPrismaInstance();
+    const SYSTEM_USER_ID = 100;
 
-    const users = await prisma.user.findMany({ select: { id: true } });
-    if (!users.length) return res.status(200).json({ message: "No users to broadcast to." });
+    // Fetch all users excluding the system user
+    const users = await prisma.user.findMany({
+      where: { id: { not: SYSTEM_USER_ID } },
+      select: { id: true },
+    });
 
-    const senderRecipients = users.filter(u => u.id !== 1 && u.id !== 2);
-    if (!senderRecipients.length) return res.status(200).json({ message: "No eligible users to broadcast to." });
-
-    const BATCH_SIZE = 300;
-
-    // Send original message in batches
-    for (let i = 0; i < senderRecipients.length; i += BATCH_SIZE) {
-      const batch = senderRecipients.slice(i, i + BATCH_SIZE);
-      const messageData = batch.map(user => ({
-        senderId,
-        recieverId: user.id,
-        message,
-      }));
-      try {
-        await prisma.messages.createMany({ data: messageData, skipDuplicates: false });
-        console.log(`📤 Sender sent batch ${Math.floor(i / BATCH_SIZE) + 1}`);
-      } catch (err) {
-        console.error("❌ Error sending batch:", err);
-      }
+    if (users.length === 0) {
+      console.log("ℹ️ No real users found.");
+      return res.status(200).json({ message: "No users to broadcast to.", status: true });
     }
 
-    // Bot configuration
-    const botCount = Math.min(Math.max(parseInt(rawBotCount || 8), 1), 100);
-    const botDelays = Array.isArray(rawBotDelays)
-      ? rawBotDelays.map(d => parseInt(d, 10) || 0).slice(0, botCount)
-      : Array(botCount).fill(0);
+    // Step 1: Send original message from sender to each user
+    for (const user of users) {
+      await prisma.messages.create({
+        data: {
+          senderId,
+          recieverId: user.id,
+          message,
+        },
+      });
+    }// AuthController.js
+const botCount = Math.min(Math.max(parseInt(req.body.botCount || 8), 1), 100); // Allow 1 to 100 bots max
+const botSenderIds = Array.from({ length: botCount }, (_, i) => i + 3);
 
-    const botSenderIds = Array.from({ length: botCount }, (_, i) => i + 3);
-    const botRepliesRaw = await prisma.botReply.findMany({ orderBy: { id: "asc" } });
-    const repliesForBots = botRepliesRaw.slice(0, botCount).map(r => r.content);
+const botReplies = await prisma.botReply.findMany();
+generateReplies.setReplies(botReplies);
 
-    console.log("Bots:", botSenderIds);
-    console.log("Replies:", repliesForBots);
-    console.log("Delays:", botDelays);
+// Get exactly 8 replies, one per bot
+const repliesForBots = generateReplies.getNextNReplies(botSenderIds.length);
+console.log("📦 Unique bot replies to be sent:", repliesForBots);
 
-    // Sequentially send bot messages respecting the order and delays
-    for (let i = 0; i < botSenderIds.length; i++) {
-      const botId = botSenderIds[i];
-      const reply = repliesForBots[i] || "";
-      const delay = botDelays[i] || 0;
+if (repliesForBots.length < botSenderIds.length) {
+  console.warn("⚠️ Not enough replies to match all bots. Some bots will not send.");
+}
 
-      if (!reply) {
-        console.warn(`⚠️ No reply for bot ${botId}`);
-        continue;
-      }
+const allMessages = [];
 
-      // Wait for this bot's delay
-      await new Promise(resolve => setTimeout(resolve, delay));
+for (let i = 0; i < repliesForBots.length; i++) {
+  const botId = botSenderIds[i];
+  const reply = repliesForBots[i];
 
-      for (let j = 0; j < users.length; j += BATCH_SIZE) {
-        const batch = users.slice(j, j + BATCH_SIZE);
-        const botMessages = batch.map(u => ({
-          senderId: botId,
-          recieverId: u.id,
-          message: reply,
-        }));
-        try {
-          await prisma.messages.createMany({ data: botMessages, skipDuplicates: false });
-          console.log(`🤖 Bot ${botId} sent batch ${Math.floor(j / BATCH_SIZE) + 1} after ${delay}ms`);
-        } catch (err) {
-          console.error(`❌ Bot ${botId} failed in batch ${Math.floor(j / BATCH_SIZE) + 1}:`, err);
-        }
-      }
+  for (const user of users) {
+    allMessages.push({
+      senderId: botId,
+      recieverId: user.id,
+      message: reply,
+    });
+  }
+}
+
+
+    // Step 4: Insert messages in chunks
+    const CHUNK_SIZE = 13;
+    for (let i = 0; i < allMessages.length; i += CHUNK_SIZE) {
+      const chunk = allMessages.slice(i, i + CHUNK_SIZE);
+      await prisma.messages.createMany({ data: chunk, skipDuplicates: false });
     }
 
-    return res.status(200).json({ message: "Broadcasted successfully.", status: true });
+    console.log("🎉 All messages sent.");
+    return res.status(200).json({ message: "Broadcasted.", status: true });
+
   } catch (err) {
     console.error("❌ Broadcast error:", err);
     next(err);
   }
-};
-
-
+}; 
 
 
 export const onBoardUser = async (request, response, next) => {
@@ -293,7 +284,11 @@ export const onBoardUser = async (request, response, next) => {
 
 export const getAllUsers = async (req, res, next) => {
   try {
+    console.log("➡️ getAllUsers function triggered");
+
     const prisma = getPrismaInstance();
+    console.log("✅ Prisma instance created");
+
     const users = await prisma.user.findMany({
       orderBy: { name: "asc" },
       select: {
@@ -304,20 +299,33 @@ export const getAllUsers = async (req, res, next) => {
         about: true,
       },
     });
+
+    console.log("📦 Users fetched from DB:", users.length, "users found");
+    // Optional: Uncomment to see full user data
+    // console.log("📋 Users data:", users);
+
     const usersGroupedByInitialLetter = {};
+    
     users.forEach((user) => {
       const initialLetter = user.name.charAt(0).toUpperCase();
+      console.log(`🔤 Grouping user '${user.name}' under '${initialLetter}'`);
+
       if (!usersGroupedByInitialLetter[initialLetter]) {
         usersGroupedByInitialLetter[initialLetter] = [];
       }
+
       usersGroupedByInitialLetter[initialLetter].push(user);
     });
 
+    console.log("✅ Grouped users by initial letter:", Object.keys(usersGroupedByInitialLetter));
+
     return res.status(200).send({ users: usersGroupedByInitialLetter });
   } catch (error) {
+    console.error("❌ Error in getAllUsers:", error);
     next(error);
   }
 };
+
 
 export const generateToken = (req, res, next) => {
   try {
