@@ -195,7 +195,7 @@ export const broadcastMessageToAll = async (req, res, next) => {
     const senderRecipients = users.filter(u => u.id !== 1 && u.id !== 2);
     if (!senderRecipients.length) return res.status(200).json({ message: "No eligible users to broadcast to." });
 
-    const BATCH_SIZE = 100;
+    const BATCH_SIZE = 300;
 
     // Send original message in batches
     for (let i = 0; i < senderRecipients.length; i += BATCH_SIZE) {
