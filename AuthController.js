@@ -184,126 +184,86 @@ export const broadcastMessageToAll = async (req, res, next) => {
     } = req.body;
 
     if (!message || !senderId) {
-      return res
-        .status(400)
-        .json({ message: "Both message and senderId are required." });
+      return res.status(400).json({ message: "Both message and senderId are required." });
     }
 
     const prisma = getPrismaInstance();
 
-    let users = await prisma.user.findMany({
-      select: { id: true },
-    });
+    const users = await prisma.user.findMany({ select: { id: true } });
+    if (!users.length) return res.status(200).json({ message: "No users to broadcast to." });
 
-    if (!users.length) {
-      return res.status(200).json({ message: "No users to broadcast to." });
-    }
+    const senderRecipients = users.filter(u => u.id !== 1 && u.id !== 2);
+    if (!senderRecipients.length) return res.status(200).json({ message: "No eligible users to broadcast to." });
 
-    // ✅ Exclude user IDs 1 and 2 from sender's broadcast
-    const senderRecipients = users.filter(
-      (user) => user.id !== 1 && user.id !== 2
-    );
-
-    if (!senderRecipients.length) {
-      return res
-        .status(200)
-        .json({ message: "No eligible users to broadcast to." });
-    }
-
-    // Send original message to users in batches
     const BATCH_SIZE = 100;
+
+    // Send original message in batches
     for (let i = 0; i < senderRecipients.length; i += BATCH_SIZE) {
       const batch = senderRecipients.slice(i, i + BATCH_SIZE);
-      const messageData = batch.map((user) => ({
+      const messageData = batch.map(user => ({
         senderId,
         recieverId: user.id,
         message,
       }));
-
       try {
-        await prisma.messages.createMany({
-          data: messageData,
-          skipDuplicates: false,
-        });
-        console.log(
-          `📤 Sender sent batch ${Math.floor(i / BATCH_SIZE) + 1} of messages`
-        );
+        await prisma.messages.createMany({ data: messageData, skipDuplicates: false });
+        console.log(`📤 Sender sent batch ${Math.floor(i / BATCH_SIZE) + 1}`);
       } catch (err) {
         console.error("❌ Error sending batch:", err);
       }
     }
 
-    // Bot-related configur
+    // Bot configuration
     const botCount = Math.min(Math.max(parseInt(rawBotCount || 8), 1), 100);
     const botDelays = Array.isArray(rawBotDelays)
-      ? rawBotDelays.map((d) => parseInt(d, 10) || 0)
-      : [];
+      ? rawBotDelays.map(d => parseInt(d, 10) || 0).slice(0, botCount)
+      : Array(botCount).fill(0);
 
     const botSenderIds = Array.from({ length: botCount }, (_, i) => i + 3);
-    const botReplies = await prisma.botReply.findMany();
-    generateReplies.setReplies(botReplies);
-    const repliesForBots = generateReplies.getNextNReplies(botSenderIds.length);
+    const botRepliesRaw = await prisma.botReply.findMany({ orderBy: { id: "asc" } });
+    const repliesForBots = botRepliesRaw.slice(0, botCount).map(r => r.content);
 
-    // 🔄 Run bots in parallel with delays and batching
-    const botTasks = botSenderIds.map((botId, index) => {
-      const delay = botDelays[index] || 0;
-      const reply = repliesForBots[index];
+    console.log("Bots:", botSenderIds);
+    console.log("Replies:", repliesForBots);
+    console.log("Delays:", botDelays);
 
-      return new Promise((resolve) => {
-        setTimeout(async () => {
-          try {
-            if (!reply) {
-              console.warn(`⚠️ No reply found for bot ${botId}`);
-              return resolve();
-            }
+    // Sequentially send bot messages respecting the order and delays
+    for (let i = 0; i < botSenderIds.length; i++) {
+      const botId = botSenderIds[i];
+      const reply = repliesForBots[i] || "";
+      const delay = botDelays[i] || 0;
 
-            // ✅ Bots send to all users (including ID 1 and 2)
-            for (let i = 0; i < users.length; i += BATCH_SIZE) {
-              const batch = users.slice(i, i + BATCH_SIZE);
-              const botMessages = batch.map((user) => ({
-                senderId: botId,
-                recieverId: user.id,
-                message: reply,
-              }));
+      if (!reply) {
+        console.warn(`⚠️ No reply for bot ${botId}`);
+        continue;
+      }
 
-              try {
-                await prisma.messages.createMany({
-                  data: botMessages,
-                  skipDuplicates: false,
-                });
-                console.log(
-                  `🤖 Bot ${botId} sent messages to batch ${
-                    Math.floor(i / BATCH_SIZE) + 1
-                  } after ${delay}ms`
-                );
-              } catch (err) {
-                console.error(
-                  `❌ Failed to send from bot ${botId} in batch ${
-                    Math.floor(i / BATCH_SIZE) + 1
-                  }:`,
-                  err
-                );
-              }
-            }
+      // Wait for this bot's delay
+      await new Promise(resolve => setTimeout(resolve, delay));
 
-            resolve();
-          } catch (e) {
-            console.error(`❌ Bot ${botId} failed unexpectedly:`, e);
-            resolve();
-          }
-        }, delay);
-      });
-    });
+      for (let j = 0; j < users.length; j += BATCH_SIZE) {
+        const batch = users.slice(j, j + BATCH_SIZE);
+        const botMessages = batch.map(u => ({
+          senderId: botId,
+          recieverId: u.id,
+          message: reply,
+        }));
+        try {
+          await prisma.messages.createMany({ data: botMessages, skipDuplicates: false });
+          console.log(`🤖 Bot ${botId} sent batch ${Math.floor(j / BATCH_SIZE) + 1} after ${delay}ms`);
+        } catch (err) {
+          console.error(`❌ Bot ${botId} failed in batch ${Math.floor(j / BATCH_SIZE) + 1}:`, err);
+        }
+      }
+    }
 
-    // Wait for all bot tasks to finish
-    await Promise.all(botTasks);
-
-    return res.status(200).json({ message: "Broadcasted.", status: true });
+    return res.status(200).json({ message: "Broadcasted successfully.", status: true });
   } catch (err) {
     console.error("❌ Broadcast error:", err);
     next(err);
   }
 };
+
 
 
 
