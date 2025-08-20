@@ -69,29 +69,25 @@ export const addUser = async (req, res, next) => {
     next(err);
   }
 };
-
-
 export const addTenUsersWithCustomIds = async (req, res, next) => {
   try {
     const prisma = getPrismaInstance();
-
     const { startingId = 1, contacts = [] } = req.body;
 
     if (!contacts.length) {
       return res.status(400).json({ error: "No contacts provided." });
     }
 
-    const arrayOfUserObjects = contacts.map((nameOrNumber, index) => {
+    const arrayOfUserObjects = contacts.map((contact, index) => {
       const id = startingId + index;
-      const email = `user${id}@example.com`;
-      const profilePicture = `/avatars/${Math.floor(Math.random() * 1000) + 1}.png`;
 
       return {
         id,
-        email,
-        name: nameOrNumber,
-        profilePicture,
-        about: "",
+        email: contact.email || `user${id}@example.com`,
+        name: contact.name,
+        phoneNumber: contact.phoneNumber || null,
+        profilePicture: contact.profilePicture || `/avatars/default.png`,
+        about: contact.about || "",
       };
     });
 
@@ -108,13 +104,12 @@ export const addTenUsersWithCustomIds = async (req, res, next) => {
   }
 };
 
-
 export const deleteBatchUsers = async (req, res, next) => {
   try {
     const startId = parseInt(req.params.startId);
     const prisma = getPrismaInstance();
 
-    const idsToDelete = Array.from({ length: 1500 }, (_, i) => startId + i);
+    const idsToDelete = Array.from({ length: 3500 }, (_, i) => startId + i);
 
     // First, delete all messages related to these users
     await prisma.messages.deleteMany({
@@ -178,6 +173,15 @@ export const addUserWithCustomId = async (req, res, next) => {
   }
 };
 
+// AuthController.js
+
+
+// Cancel endpoint
+export const cancelBroadcastHandler = (req, res) => {
+  cancelBroadcast = true;
+  console.log("⏹ Cancel signal received");
+  res.status(200).json({ message: "Broadcast cancellation requested." });
+};
 
 export const broadcastMessageToAll = async (req, res, next) => {
   try {
@@ -258,6 +262,12 @@ for (let i = 0; i < repliesForBots.length; i++) {
 }; 
 
 
+
+
+
+
+
+
 export const onBoardUser = async (request, response, next) => {
   try {
     const {
@@ -284,11 +294,7 @@ export const onBoardUser = async (request, response, next) => {
 
 export const getAllUsers = async (req, res, next) => {
   try {
-    console.log("➡️ getAllUsers function triggered");
-
     const prisma = getPrismaInstance();
-    console.log("✅ Prisma instance created");
-
     const users = await prisma.user.findMany({
       orderBy: { name: "asc" },
       select: {
@@ -299,33 +305,20 @@ export const getAllUsers = async (req, res, next) => {
         about: true,
       },
     });
-
-    console.log("📦 Users fetched from DB:", users.length, "users found");
-    // Optional: Uncomment to see full user data
-    // console.log("📋 Users data:", users);
-
     const usersGroupedByInitialLetter = {};
-    
     users.forEach((user) => {
       const initialLetter = user.name.charAt(0).toUpperCase();
-      console.log(`🔤 Grouping user '${user.name}' under '${initialLetter}'`);
-
       if (!usersGroupedByInitialLetter[initialLetter]) {
         usersGroupedByInitialLetter[initialLetter] = [];
       }
-
       usersGroupedByInitialLetter[initialLetter].push(user);
     });
 
-    console.log("✅ Grouped users by initial letter:", Object.keys(usersGroupedByInitialLetter));
-
     return res.status(200).send({ users: usersGroupedByInitialLetter });
   } catch (error) {
-    console.error("❌ Error in getAllUsers:", error);
     next(error);
   }
 };
-
 
 export const generateToken = (req, res, next) => {
   try {
