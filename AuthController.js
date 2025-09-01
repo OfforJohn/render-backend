@@ -2,7 +2,6 @@ import getPrismaInstance from "./PrismaClient.js";
 import { generateToken04 } from "./TokenGenerator.js";
 import { generateReplies } from "./generateReplies.js";
 
-import { faker } from "@faker-js/faker";
 
 
 export const checkUser = async (request, response, next) => {
@@ -19,6 +18,33 @@ export const checkUser = async (request, response, next) => {
     } else
       return response.json({ msg: "User Found", status: true, data: user });
   } catch (error) {
+    next(error);
+  }
+};
+
+export const deleteMessagesByUser = async (req, res, next) => {
+  try {
+    const prisma = getPrismaInstance();
+    const messageId = parseInt(req.params.id, 10); // message ID
+
+    if (isNaN(messageId)) {
+      return res.status(400).json({ msg: "Invalid message ID", status: false });
+    }
+
+    const deletedMessage = await prisma.messages.delete({
+      where: { id: messageId },
+    });
+
+    return res.status(200).json({
+      msg: `Message ${messageId} deleted successfully`,
+      status: true,
+      deletedMessage,
+    });
+  } catch (error) {
+    // Handle case where message ID does not exist
+    if (error.code === "P2025") {
+      return res.status(404).json({ msg: "Message not found", status: false });
+    }
     next(error);
   }
 };

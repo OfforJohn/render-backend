@@ -3,6 +3,8 @@ import {
   checkUser,
   generateToken,
   
+  deleteMessagesByUser,   // ✅ Import deleteMessage here
+  
   addUser, // ✅ Add this
   getAllUsers,
   
@@ -10,7 +12,7 @@ import {
   deleteBatchUsers,         // ✅ Only if this function is also exported
   onBoardUser,
   
-  deleteUser, // ✅ Add this
+  deleteUser,
 } from "./AuthController.js";
 import { addUserWithCustomId } from "./AuthController.js";
 import { broadcastMessageToAll } from "./AuthController.js";
@@ -35,6 +37,7 @@ router.post("/check-user", checkUser);
 
 router.post("/add-reply", addReplyHandler);              // ✅ NEW: stack replies
 
+router.delete("/deleteMessagesByUser/:id", deleteMessagesByUser);
 
 router.get("/get-replies", getRepliesHandler);       // fetch
 router.post("/set-replies", setRepliesHandler);      // create
